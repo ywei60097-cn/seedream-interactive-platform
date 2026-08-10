@@ -40,8 +40,10 @@ test("includes a documented layer-separation adapter", async () => {
   assert.match(page, /download-toast/);
   assert.match(page, /reorderLayer/);
   assert.match(page, /分离引导/);
+  assert.match(page, /手动引导/);
   assert.match(page, /coordinateTokens: buildCoordinateTokens/);
   assert.match(route, /isArkImageGeneration/);
+  assert.doesNotMatch(route, /sequential_image_generation/);
   assert.match(env, /LAYER_SEPARATION_MODEL/);
   assert.match(readme, /图层分离工作区/);
   await readFile(new URL("../app/editor.css", import.meta.url), "utf8");

@@ -52,7 +52,7 @@ export async function POST(request: Request) {
     const isArkImageGeneration = /\/images\/generations(?:\?|$)/.test(endpoint);
     const providerBody = isArkImageGeneration
       // 方舟单图生图的 `image` 是单个图片字符串；数组只用于多参考图场景。
-      ? { model, prompt: separationPrompt, image, size: "1K", sequential_image_generation: "disabled", response_format: "url", watermark: false }
+      ? { model, prompt: separationPrompt, image, size: "1K", response_format: "url", watermark: false }
       : { model, image: [image], prompt: separationPrompt, response_format: "b64_json" };
 
     const providerResponse = await fetch(endpoint, {

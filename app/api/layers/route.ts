@@ -51,7 +51,8 @@ export async function POST(request: Request) {
     // 兼容用户将方舟 ImageGenerations 配置为图层服务的场景：该端点要求 model 与 prompt。
     const isArkImageGeneration = /\/images\/generations(?:\?|$)/.test(endpoint);
     const providerBody = isArkImageGeneration
-      ? { model, prompt: separationPrompt, image: [image], size: "1K", output_format: "png", response_format: "b64_json", watermark: false, optimize_prompt_options: { mode: "standard" } }
+      // 方舟单图生图的 `image` 是单个图片字符串；数组只用于多参考图场景。
+      ? { model, prompt: separationPrompt, image, size: "1K", sequential_image_generation: "disabled", response_format: "url", watermark: false }
       : { model, image: [image], prompt: separationPrompt, response_format: "b64_json" };
 
     const providerResponse = await fetch(endpoint, {

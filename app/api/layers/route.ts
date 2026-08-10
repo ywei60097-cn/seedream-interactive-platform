@@ -34,20 +34,30 @@ function normalizeLayer(layer: ProviderLayer, index: number) {
 
 export async function POST(request: Request) {
   try {
-    const { image, prompt } = await request.json() as { image?: unknown; prompt?: unknown };
+    const { image, prompt, coordinateTokens = [], markInstructions = "" } = await request.json() as { image?: unknown; prompt?: unknown; coordinateTokens?: unknown; markInstructions?: unknown };
     if (typeof image !== "string" || !image.startsWith("data:image/")) return Response.json({ error: "请先上传一张有效图片" }, { status: 400 });
     if (image.length > MAX_INPUT_DATA_URL_LENGTH) return Response.json({ error: "输入图片过大，请压缩到 18MB 以内后重试。" }, { status: 413 });
 
     // 图层分离服务由环境变量指定，避免将尚未公开或不同环境的 API 契约硬编码在浏览器中。
     const endpoint = process.env.LAYER_SEPARATION_ENDPOINT;
     const apiKey = process.env.LAYER_SEPARATION_API_KEY || process.env.ARK_API_KEY;
-    const model = process.env.LAYER_SEPARATION_MODEL;
+    const model = process.env.LAYER_SEPARATION_MODEL || process.env.ARK_MODEL_ID || "doubao-seedream-5-0-pro-260628";
     if (!endpoint || !apiKey) return Response.json({ error: "服务端尚未配置图层分离服务。请设置 LAYER_SEPARATION_ENDPOINT 与 LAYER_SEPARATION_API_KEY（或 ARK_API_KEY）。" }, { status: 503 });
+
+    const safeTokens = Array.isArray(coordinateTokens) ? coordinateTokens.filter((token): token is string => typeof token === "string" && /^图1(?:<point>\d+\s+\d+<\/point>|<bbox>\d+\s+\d+\s+\d+\s+\d+<\/bbox>)$/.test(token)).slice(0, 20) : [];
+    const safeMarkInstructions = typeof markInstructions === "string" ? markInstructions.slice(0, 2_000) : "";
+    const selectionInstruction = safeTokens.length ? `手动定位：${safeTokens.join("；")}。` : "";
+    const separationPrompt = `请根据图1生成可独立使用的图层素材。${selectionInstruction}${safeMarkInstructions ? `用户标注意图：${safeMarkInstructions}。` : ""}${typeof prompt === "string" && prompt.trim() ? `用户要求：${prompt.trim()}。` : "请优先提取画面主体，保持边缘干净，并保持未选区域不变。"}`;
+    // 兼容用户将方舟 ImageGenerations 配置为图层服务的场景：该端点要求 model 与 prompt。
+    const isArkImageGeneration = /\/images\/generations(?:\?|$)/.test(endpoint);
+    const providerBody = isArkImageGeneration
+      ? { model, prompt: separationPrompt, image: [image], size: "1K", output_format: "png", response_format: "b64_json", watermark: false, optimize_prompt_options: { mode: "standard" } }
+      : { model, image: [image], prompt: separationPrompt, response_format: "b64_json" };
 
     const providerResponse = await fetch(endpoint, {
       method: "POST",
       headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ image: [image], ...(model ? { model } : {}), ...(typeof prompt === "string" && prompt.trim() ? { prompt: prompt.trim() } : {}), response_format: "b64_json" }),
+      body: JSON.stringify(providerBody),
     });
     const payload = await providerResponse.json() as Record<string, unknown>;
     if (!providerResponse.ok) {

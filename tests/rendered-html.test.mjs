@@ -42,6 +42,8 @@ test("includes a documented layer-separation adapter", async () => {
   assert.match(page, /分离引导/);
   assert.match(page, /手动引导/);
   assert.match(page, /activeMarkRef/);
+  assert.match(page, /clearCurrentImage/);
+  assert.match(page, /resetLayerResults/);
   assert.match(page, /coordinateTokens: buildCoordinateTokens/);
   assert.match(route, /Seedream 5\.0 Pro 图层拆分走 ImageGenerations 的独立开关/);
   assert.match(route, /layer_decomposition: true/);

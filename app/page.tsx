@@ -41,6 +41,8 @@ export default function Home() {
   // Keep the active gesture in refs so a quick click or drag cannot lose its mark.
   const activeMarkRef = useRef<Mark | null>(null);
   const panDragRef = useRef<Point | null>(null);
+  const layerRequestRef = useRef(0);
+  const layerProgressTimerRef = useRef<number | null>(null);
   const layerImagesRef = useRef(new Map<string, HTMLImageElement>());
   const toastTimerRef = useRef<number | null>(null);
   const stageRef = useRef<HTMLDivElement>(null);
@@ -155,7 +157,19 @@ export default function Home() {
   const clearEditingState = () => { activeMarkRef.current = null; panDragRef.current = null; setMarks([]); setRedoStack([]); setActive(null); setPan({ x: 0, y: 0 }); setZoom(1); };
   const switchInteractionMode = (nextMode: InteractionMode) => { if (nextMode === interactionMode) return; setInteractionMode(nextMode); setTool(nextMode === "coordinate" ? "point" : "brush"); clearEditingState(); setError(""); };
   const switchWorkspace = (nextWorkspace: Workspace) => { if (nextWorkspace === workspace) return; clearEditingState(); setWorkspace(nextWorkspace); setTool(nextWorkspace === "layers" ? "rect" : "point"); setLayerError(""); };
-  const upload = (e: ChangeEvent<HTMLInputElement>) => { const file = e.target.files?.[0]; if (!file) return; const reader = new FileReader(); reader.onload = () => { setSource(String(reader.result)); setResult(""); setShowResult(false); clearEditingState(); }; reader.readAsDataURL(file); };
+  const resetLayerResults = () => {
+    layerRequestRef.current += 1;
+    if (layerProgressTimerRef.current) window.clearInterval(layerProgressTimerRef.current);
+    layerProgressTimerRef.current = null;
+    layerImagesRef.current.clear(); setLayers([]); setSelectedLayerId(""); setLayerError(""); setLayerProgress(0); setLayerStage(""); setSeparating(false);
+  };
+  const upload = (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]; e.target.value = "";
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => { resetLayerResults(); setSource(String(reader.result)); setResult(""); setShowResult(false); setPrompt(""); clearEditingState(); };
+    reader.readAsDataURL(file);
+  };
   const undo = () => setMarks(old => { const last = old.at(-1); if (last) setRedoStack(r => [...r, last]); return old.slice(0, -1); });
   const redo = () => setRedoStack(old => { const last = old.at(-1); if (last) setMarks(m => [...m, last]); return old.slice(0, -1); });
   const updateMark = (id: string, changes: Partial<Mark>) => setMarks(current => current.map(mark => mark.id === id ? { ...mark, ...changes } : mark));
@@ -183,20 +197,25 @@ export default function Home() {
   const updateLayer = (id: string, changes: Partial<SeparatedLayer>) => setLayers(current => current.map(layer => layer.id === id ? { ...layer, ...changes } : layer));
   const separateLayers = async () => {
     if (!source || separating) return;
-    setSeparating(true); setLayerError(""); setLayerProgress(8); setLayerStage("正在上传原图");
+    const requestId = ++layerRequestRef.current;
+    if (layerProgressTimerRef.current) window.clearInterval(layerProgressTimerRef.current);
+    setSeparating(true); setLayerError(""); setLayerProgress(8); setLayerStage(layers.length ? "正在按最新提示词重新分离" : "正在上传原图");
     const progressTimer = window.setInterval(() => setLayerProgress(current => { const next = Math.min(88, current + (current < 35 ? 13 : current < 65 ? 7 : 3)); setLayerStage(next < 35 ? "正在上传原图" : next < 65 ? "正在识别主体与场景" : "正在生成可编辑图层"); return next; }), 650);
+    layerProgressTimerRef.current = progressTimer;
     try {
       const response = await fetch("/api/layers", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ image: source, prompt: prompt.trim() || undefined, coordinateTokens: buildCoordinateTokens(), markInstructions }) });
       const data = await response.json() as { layers?: Array<{ id?: string; name?: string; image?: string; kind?: string; zIndex?: number; boundingBox?: LayerBounds }>; error?: string };
+      if (requestId !== layerRequestRef.current) return;
       if (!response.ok || !data.layers?.length) throw new Error(data.error || "图层分离服务未返回可用图层");
       const nextLayers = data.layers.filter(layer => layer.image).map((layer, index) => { const zIndex = Number.isFinite(layer.zIndex) ? layer.zIndex! : index; const name = layer.name || (zIndex === 0 ? "背景底图" : `图层 ${zIndex}`); return { id: layer.id || crypto.randomUUID(), name, image: layer.image!, kind: layer.kind, zIndex, boundingBox: layer.boundingBox, group: zIndex === 0 ? "背景" : inferLayerGroup(name, layer.kind), visible: true, opacity: 100, order: zIndex }; }).sort((a, b) => a.order - b.order);
       if (!nextLayers.length) throw new Error("图层分离服务未返回包含图片的数据");
       layerImagesRef.current.clear(); setLayers(nextLayers); setSelectedLayerId(nextLayers[0].id); setWorkspace("layers"); setLayerProgress(100); setLayerStage("已完成"); showToast(`图层分离完成，已生成 ${nextLayers.length} 个图层。`);
-    } catch (e) { setLayerError(e instanceof Error ? e.message : "图层分离失败"); setLayerStage("处理失败，可重试"); } finally { window.clearInterval(progressTimer); setSeparating(false); }
+    } catch (e) { if (requestId === layerRequestRef.current) { setLayerError(e instanceof Error ? e.message : "图层分离失败"); setLayerStage("处理失败，可重试"); } } finally { if (layerProgressTimerRef.current === progressTimer) { window.clearInterval(progressTimer); layerProgressTimerRef.current = null; } if (requestId === layerRequestRef.current) setSeparating(false); }
   };
   const reorderLayer = (targetId: string) => { if (!draggedLayerId || draggedLayerId === targetId) return; const current = [...orderedLayers], from = current.findIndex(layer => layer.id === draggedLayerId), to = current.findIndex(layer => layer.id === targetId); if (from < 0 || to < 0) return; const [moved] = current.splice(from, 1); current.splice(to, 0, moved); setLayers(current.map((layer, index) => ({ ...layer, order: index }))); setDraggedLayerId(""); };
   const markInstructions = marks.filter(mark => mark.intent.trim()).map(mark => `标记${String(mark.number).padStart(2, "0")}：${mark.intent.trim()}`).join("；");
   const editSelectedLayer = () => { if (!selectedLayer) return; setSource(selectedLayer.image); setResult(""); setShowResult(false); setWorkspace("edit"); clearEditingState(); };
+  const clearCurrentImage = () => { resetLayerResults(); setSource(""); setResult(""); setShowResult(false); setPrompt(""); setError(""); setWorkspace("edit"); setTool("point"); clearEditingState(); };
   const formatDebug = (value: unknown) => JSON.stringify(value, null, 2);
   const copyDebug = async (value: unknown) => { await navigator.clipboard.writeText(formatDebug(value)); };
   const summarizeClientRequest = (request: Record<string, unknown>) => ({
@@ -227,7 +246,7 @@ export default function Home() {
     <section className="history-page"><div className="history-copy"><span className="date">2026-07-14 12:41:37</span><p>使用标注区域对图像进行精准编辑，保持未标注区域与原图完全一致。</p><div className="tags"><span>豆包画梦 5.0 专业版</span><span>参考图片</span><span>高级参数 ⓘ</span></div></div><div className="gallery-card">{result ? <img src={result} alt="最新生成结果" /> : <div className="gallery-placeholder">生成结果将在这里显示</div>}<div className="card-actions"><button onClick={() => switchCanvasImage(true)} disabled={!result}>⌁ 重新编辑</button><button onClick={generate} disabled={!canvasSource || !prompt.trim() || busy}>↻ 再次生成</button>{result && <button onClick={downloadResult}>↓ 下载</button>}</div></div></section>
     <aside className="explore"><div className="explore-tabs"><b>发现</b><span>历史记录</span></div><div className="masonry">{Array.from({ length: 12 }).map((_, i) => <div key={i} className={`tile t${i % 6}`}>画梦<br/><small>视觉灵感 {i + 1}</small></div>)}</div></aside>
 
-    <div className="modal-backdrop"><section className="draw-modal" aria-label="画板编辑器"><div className="modal-title"><div className="workspace-tabs"><button className={workspace === "edit" ? "selected" : ""} onClick={() => switchWorkspace("edit")}>交互编辑</button><button className={workspace === "layers" ? "selected" : ""} onClick={() => switchWorkspace("layers")}>图层分离</button></div><div className="result-actions">{workspace === "edit" && result && <><button className={!showResult ? "selected" : ""} onClick={() => switchCanvasImage(false)}>原图</button><button className={showResult ? "selected" : ""} onClick={() => switchCanvasImage(true)}>生成结果</button><button className="download-result" onClick={downloadResult}>↓ 下载结果图</button></>}<button aria-label="关闭">×</button></div></div>
+    <div className="modal-backdrop"><section className="draw-modal" aria-label="画板编辑器"><div className="modal-title"><div className="workspace-tabs"><button className={workspace === "edit" ? "selected" : ""} onClick={() => switchWorkspace("edit")}>交互编辑</button><button className={workspace === "layers" ? "selected" : ""} onClick={() => switchWorkspace("layers")}>图层分离</button></div><div className="result-actions">{workspace === "edit" && result && <><button className={!showResult ? "selected" : ""} onClick={() => switchCanvasImage(false)}>原图</button><button className={showResult ? "selected" : ""} onClick={() => switchCanvasImage(true)}>生成结果</button><button className="download-result" onClick={downloadResult}>↓ 下载结果图</button></>}<button onClick={clearCurrentImage} aria-label="清空当前图片" title="清空当前图片">×</button></div></div>
       <div className="editor-stage" ref={stageRef}>{!canvasSource && <label className="upload-empty"><span>＋</span><b>上传图片开始创作</b><small>支持 PNG、JPG 或 WEBP</small><input type="file" accept="image/*" onChange={upload} /></label>}<canvas ref={canvasRef} onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerCancel={pointerUp} />
         <div className="tools">{visibleTools.map(t => <button key={t} className={tool === t ? "selected tip" : "tip"} data-tip={TOOL_INFO[t].label} onClick={() => setTool(t)} aria-label={TOOL_INFO[t].label}><Icon>{TOOL_INFO[t].icon}</Icon></button>)}</div>
         <div className="history-tools"><button className="tip" data-tip="撤销" onClick={undo} disabled={!marks.length} aria-label="撤销">↶</button><button className="tip" data-tip="重做" onClick={redo} disabled={!redoStack.length} aria-label="重做">↷</button></div>

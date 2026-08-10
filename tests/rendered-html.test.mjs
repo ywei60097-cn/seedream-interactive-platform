@@ -43,8 +43,11 @@ test("includes a documented layer-separation adapter", async () => {
   assert.match(page, /手动引导/);
   assert.match(page, /activeMarkRef/);
   assert.match(page, /coordinateTokens: buildCoordinateTokens/);
-  assert.match(route, /isArkImageGeneration/);
+  assert.match(route, /Seedream 5\.0 Pro 图层拆分走 ImageGenerations 的独立开关/);
+  assert.match(route, /layer_decomposition: true/);
+  assert.match(route, /toLayerBoundingBox/);
   assert.doesNotMatch(route, /sequential_image_generation/);
+  assert.doesNotMatch(route, /max_images/);
   assert.match(env, /LAYER_SEPARATION_MODEL/);
   assert.match(readme, /图层分离工作区/);
   await readFile(new URL("../app/editor.css", import.meta.url), "utf8");

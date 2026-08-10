@@ -13,6 +13,9 @@ type ProviderLayer = {
   image_url?: string;
   b64_json?: string;
   mime_type?: string;
+  z_index?: number;
+  description?: string;
+  bounding_box?: { absolute?: number[]; normalized?: number[] };
 };
 
 function findProviderLayers(payload: Record<string, unknown>) {
@@ -29,7 +32,24 @@ function findProviderLayers(payload: Record<string, unknown>) {
 
 function normalizeLayer(layer: ProviderLayer, index: number) {
   const image = layer.image || layer.image_url || layer.url || (layer.b64_json ? `data:${layer.mime_type || "image/png"};base64,${layer.b64_json}` : "");
-  return { id: layer.id || `layer-${index + 1}`, name: layer.name || layer.label || `图层 ${index + 1}`, kind: layer.kind || layer.type || "独立素材", image };
+  const zIndex = Number.isFinite(layer.z_index) ? layer.z_index : index;
+  return {
+    id: layer.id || `layer-${zIndex}`,
+    name: layer.name || layer.label || (zIndex === 0 ? "背景底图" : `图层 ${zIndex}`),
+    kind: layer.description || layer.kind || layer.type || (zIndex === 0 ? "底图" : "独立素材"),
+    image,
+    zIndex,
+    boundingBox: layer.bounding_box,
+  };
+}
+
+function toLayerBoundingBox(token: string) {
+  const point = token.match(/^图1<point>(\d+)\s+(\d+)<\/point>$/);
+  if (point) {
+    const x = Number(point[1]), y = Number(point[2]);
+    return `<bbox>${Math.max(0, x - 8)} ${Math.max(0, y - 8)} ${Math.min(1000, x + 8)} ${Math.min(1000, y + 8)}</bbox>`;
+  }
+  return token.replace(/^图1/, "");
 }
 
 export async function POST(request: Request) {
@@ -38,22 +58,28 @@ export async function POST(request: Request) {
     if (typeof image !== "string" || !image.startsWith("data:image/")) return Response.json({ error: "请先上传一张有效图片" }, { status: 400 });
     if (image.length > MAX_INPUT_DATA_URL_LENGTH) return Response.json({ error: "输入图片过大，请压缩到 18MB 以内后重试。" }, { status: 413 });
 
-    // 图层分离服务由环境变量指定，避免将尚未公开或不同环境的 API 契约硬编码在浏览器中。
-    const endpoint = process.env.LAYER_SEPARATION_ENDPOINT;
+    // Seedream 5.0 Pro 图层拆分走 ImageGenerations 的独立开关，而非组图输出。
+    const endpoint = process.env.LAYER_SEPARATION_ENDPOINT || "https://ark.cn-beijing.volces.com/api/v3/images/generations";
     const apiKey = process.env.LAYER_SEPARATION_API_KEY || process.env.ARK_API_KEY;
     const model = process.env.LAYER_SEPARATION_MODEL || process.env.ARK_MODEL_ID || "doubao-seedream-5-0-pro-260628";
-    if (!endpoint || !apiKey) return Response.json({ error: "服务端尚未配置图层分离服务。请设置 LAYER_SEPARATION_ENDPOINT 与 LAYER_SEPARATION_API_KEY（或 ARK_API_KEY）。" }, { status: 503 });
+    if (!apiKey) return Response.json({ error: "服务端尚未配置图层分离服务。请设置 LAYER_SEPARATION_API_KEY（或 ARK_API_KEY）。" }, { status: 503 });
 
-    const safeTokens = Array.isArray(coordinateTokens) ? coordinateTokens.filter((token): token is string => typeof token === "string" && /^图1(?:<point>\d+\s+\d+<\/point>|<bbox>\d+\s+\d+\s+\d+\s+\d+<\/bbox>)$/.test(token)).slice(0, 20) : [];
+    const safeTokens = Array.isArray(coordinateTokens) ? coordinateTokens.filter((token): token is string => typeof token === "string" && /^图1(?:<point>\d+\s+\d+<\/point>|<bbox>\d+\s+\d+\s+\d+\s+\d+<\/bbox>)$/.test(token)).slice(0, 16) : [];
     const safeMarkInstructions = typeof markInstructions === "string" ? markInstructions.slice(0, 2_000) : "";
-    const selectionInstruction = safeTokens.length ? `手动定位：${safeTokens.join("；")}。` : "";
-    const separationPrompt = `请根据图1生成可独立使用的图层素材。${selectionInstruction}${safeMarkInstructions ? `用户标注意图：${safeMarkInstructions}。` : ""}${typeof prompt === "string" && prompt.trim() ? `用户要求：${prompt.trim()}。` : "请优先提取画面主体，保持边缘干净，并保持未选区域不变。"}`;
-    // 兼容用户将方舟 ImageGenerations 配置为图层服务的场景：该端点要求 model 与 prompt。
-    const isArkImageGeneration = /\/images\/generations(?:\?|$)/.test(endpoint);
-    const providerBody = isArkImageGeneration
-      // 方舟单图生图的 `image` 是单个图片字符串；数组只用于多参考图场景。
-      ? { model, prompt: separationPrompt, image, size: "1K", response_format: "url", watermark: false }
-      : { model, image: [image], prompt: separationPrompt, response_format: "b64_json" };
+    // 图层拆分文档定义坐标输入为 <bbox>；点标记转换成一个小型 bbox。
+    const coordinates = safeTokens.map(toLayerBoundingBox);
+    const userPrompt = typeof prompt === "string" ? prompt.trim().slice(0, 2_000) : "";
+    const guidance = [userPrompt, safeMarkInstructions, coordinates.length ? `请精确拆分以下选区：${coordinates.join("、")}` : ""].filter(Boolean);
+    // 不传 prompt 时，5.0 Pro 会自动识别并拆分主要元素；传入时只拆分所描述的元素。
+    const providerBody = {
+      model,
+      image,
+      size: "auto",
+      output_format: "jpeg",
+      layer_decomposition: true,
+      watermark: false,
+      ...(guidance.length ? { prompt: `将图片进行精确图层分离。${guidance.join("；")}。` } : {}),
+    };
 
     const providerResponse = await fetch(endpoint, {
       method: "POST",
@@ -66,7 +92,7 @@ export async function POST(request: Request) {
       return Response.json({ error: message }, { status: providerResponse.status });
     }
     const layers = findProviderLayers(payload).map(normalizeLayer).filter(layer => layer.image);
-    if (!layers.length) return Response.json({ error: "图层分离服务响应格式无法识别；请确认接口返回 data.layers、layers、output.layers 或 result.layers。" }, { status: 502 });
+    if (!layers.length) return Response.json({ error: "图层分离服务未返回 data 图层数组。" }, { status: 502 });
     return Response.json({ layers });
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : "图层分离请求失败" }, { status: 500 });

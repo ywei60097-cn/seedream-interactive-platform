@@ -19,10 +19,10 @@ ARK_MODEL_ID=doubao-seedream-5-0-pro-260628
 
 `ARK_MODEL_ID` 可不填，默认使用 `doubao-seedream-5-0-pro-260628`。
 
-如需启用图层分离，请额外按图层分离 API 文档填写以下变量。服务端会将原图安全地转发给该地址，浏览器不会得到密钥：
+图层分离是 Seedream 5.0 Pro 的独立能力，使用同一个 ImageGenerations 地址并通过 `layer_decomposition: true` 开启；只要已配置上方的 `ARK_API_KEY` 和 5.0 Pro 模型即可使用。若需覆盖默认地址、密钥或模型，可选填：
 
 ```bash
-LAYER_SEPARATION_ENDPOINT=图层分离服务地址
+LAYER_SEPARATION_ENDPOINT=https://ark.cn-beijing.volces.com/api/v3/images/generations
 LAYER_SEPARATION_API_KEY=图层分离服务密钥 # 与方舟相同时可省略
 LAYER_SEPARATION_MODEL=服务指定模型 # 如接口不要求模型可留空
 ```
@@ -54,13 +54,13 @@ npm run lint
 - 使用服务端接口调用方舟，API Key 不会下发到浏览器。
 - 调试追踪：本地环境或 URL 附带 `?debug=1` 时，可在原图缩略图旁打开面板，查看页面、服务端和方舟之间的请求/响应；API Key 与大体积 Base64 图片数据始终隐藏。
 - 生成结果预览和下载。
-- **图层分离工作区**：调用环境变量配置的分离服务，将人物/前景/背景等素材展示为可选图层；支持切换、显示/隐藏、不透明度、单图下载，以及将选中图层送回交互编辑继续处理。
+- **图层分离工作区**：以 `layer_decomposition: true` 调用 Seedream 5.0 Pro，输出 1 张底图和最多 16 张透明 PNG 图层；支持点选、框选、涂抹与文字引导、正确的图层位置还原、排序、显示/隐藏、不透明度、单图下载，以及将选中图层送回交互编辑继续处理。
 
 ## 接口实现说明
 
 浏览器请求 `/api/generate`，由服务端读取 `ARK_API_KEY` 并调用方舟图像生成接口。前端不会保存或展示密钥。
 
-图层分离请求由 `/api/layers` 转发。它兼容 `layers`、`data.layers`、`output.layers` 与 `result.layers` 四种常见响应结构；每个图层包含 `image` / `image_url` / `url` / `b64_json` 之一即可。若参考 API 的请求或响应字段不同，只需在该路由中调整适配层，而不影响工作台 UI。
+图层分离请求由 `/api/layers` 转发。请求为单张 `image`、`layer_decomposition: true`、可选 `prompt`、`size: auto` 与 `output_format: jpeg`；不发送 `sequential_image_generation`、`sequential_image_generation_options`、`max_images` 或 `stream`。响应以 `data[0]` 为底图（`z_index: 0`），后续图层使用 `z_index` 和 `bounding_box.normalized` 恢复到正确位置。
 
 - 任意标记模式仅发送带标记的图片，避免原图和标记图相互干扰。
 - 坐标定位模式仅发送原图，并将画板标记转换为模型可理解的点/框坐标提示。

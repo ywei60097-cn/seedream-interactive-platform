@@ -11,7 +11,8 @@ type DebugTrace = { clientRequest: unknown; arkRequest?: unknown; arkResponse?: 
 type Advanced = { outputFormat: "png" | "jpeg"; watermark: boolean };
 type Workspace = "edit" | "layers";
 type LayerGroup = "人物" | "前景" | "背景" | "其他";
-type SeparatedLayer = { id: string; name: string; image: string; visible: boolean; opacity: number; kind?: string; group: LayerGroup; order: number };
+type LayerBounds = { absolute?: number[]; normalized?: number[] };
+type SeparatedLayer = { id: string; name: string; image: string; visible: boolean; opacity: number; kind?: string; group: LayerGroup; order: number; zIndex: number; boundingBox?: LayerBounds };
 
 const COLORS = ["#ff453a", "#ff9f0a", "#ffd60a", "#a8ff70", "#64d8cb", "#64a8ff", "#8e8cff", "#d77dff", "#ffffff"];
 const RATIOS = [
@@ -80,8 +81,9 @@ export default function Home() {
   const [toast, setToast] = useState("");
   const selectedLayer = layers.find(layer => layer.id === selectedLayerId);
   const orderedLayers = [...layers].sort((a, b) => a.order - b.order);
+  const backgroundLayer = orderedLayers.find(layer => layer.zIndex === 0);
   const layerPreviewOpacity = workspace === "layers" ? 1 : 1;
-  const canvasSource = workspace === "layers" && selectedLayer ? selectedLayer.image : (showResult && result ? result : source);
+  const canvasSource = workspace === "layers" && layers.length ? (backgroundLayer?.image || source) : (showResult && result ? result : source);
   const visibleTools: Tool[] = workspace === "layers" ? ["move", "point", "rect", "brush"] : interactionMode === "coordinate" ? ["move", "point", "rect"] : ["move", "point", "rect", "brush", "arrow"];
 
   const imageBox = useCallback(() => {
@@ -118,7 +120,7 @@ export default function Home() {
     const box = stage.getBoundingClientRect(), dpr = Math.min(window.devicePixelRatio || 1, 2), cssW = Math.max(320, Math.floor(box.width)), cssH = Math.max(320, Math.floor(box.height));
     if (canvas.width !== cssW * dpr || canvas.height !== cssH * dpr) { canvas.width = cssW * dpr; canvas.height = cssH * dpr; canvas.style.width = `${cssW}px`; canvas.style.height = `${cssH}px`; }
     const ctx = canvas.getContext("2d")!; ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, cssW, cssH); ctx.save(); ctx.translate(pan.x, pan.y); ctx.scale(zoom, zoom);
-    if (img) { const box = imageBox(); if (box) { ctx.save(); if (workspace === "layers" && orderedLayers.length) { orderedLayers.filter(layer => layer.visible).forEach(layer => { const layerImage = layerImagesRef.current.get(layer.id); if (layerImage?.complete) { ctx.globalAlpha = layer.opacity / 100; ctx.drawImage(layerImage, box.x, box.y, box.w, box.h); } }); } else { ctx.globalAlpha = layerPreviewOpacity; ctx.drawImage(img, box.x, box.y, box.w, box.h); } ctx.restore(); } }
+    if (img) { const box = imageBox(); if (box) { ctx.save(); if (workspace === "layers" && orderedLayers.length) { orderedLayers.filter(layer => layer.visible).forEach(layer => { const layerImage = layerImagesRef.current.get(layer.id); if (!layerImage?.complete) return; const normalized = layer.boundingBox?.normalized; const hasBounds = Array.isArray(normalized) && normalized.length === 4; const [x1, y1, x2, y2] = hasBounds ? normalized : [0, 0, 1000, 1000]; ctx.globalAlpha = layer.opacity / 100; ctx.drawImage(layerImage, box.x + box.w * (x1 / 1000), box.y + box.h * (y1 / 1000), box.w * ((x2 - x1) / 1000), box.h * ((y2 - y1) / 1000)); }); } else { ctx.globalAlpha = layerPreviewOpacity; ctx.drawImage(img, box.x, box.y, box.w, box.h); } ctx.restore(); } }
     marks.forEach(m => drawMark(ctx, m)); if (active) drawMark(ctx, active); ctx.restore();
   }, [active, drawMark, imageBox, layerPreviewOpacity, marks, orderedLayers, pan, workspace, zoom]);
 
@@ -184,10 +186,10 @@ export default function Home() {
     setSeparating(true); setLayerError(""); setLayerProgress(8); setLayerStage("正在上传原图");
     const progressTimer = window.setInterval(() => setLayerProgress(current => { const next = Math.min(88, current + (current < 35 ? 13 : current < 65 ? 7 : 3)); setLayerStage(next < 35 ? "正在上传原图" : next < 65 ? "正在识别主体与场景" : "正在生成可编辑图层"); return next; }), 650);
     try {
-      const response = await fetch("/api/layers", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ image: marks.length ? exportMarkedImage() : source, prompt: prompt.trim() || undefined, coordinateTokens: buildCoordinateTokens(), markInstructions }) });
-      const data = await response.json() as { layers?: Array<{ id?: string; name?: string; image?: string; kind?: string }>; error?: string };
+      const response = await fetch("/api/layers", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ image: source, prompt: prompt.trim() || undefined, coordinateTokens: buildCoordinateTokens(), markInstructions }) });
+      const data = await response.json() as { layers?: Array<{ id?: string; name?: string; image?: string; kind?: string; zIndex?: number; boundingBox?: LayerBounds }>; error?: string };
       if (!response.ok || !data.layers?.length) throw new Error(data.error || "图层分离服务未返回可用图层");
-      const nextLayers = data.layers.filter(layer => layer.image).map((layer, index) => { const name = layer.name || `图层 ${index + 1}`; return { id: layer.id || crypto.randomUUID(), name, image: layer.image!, kind: layer.kind, group: inferLayerGroup(name, layer.kind), visible: true, opacity: 100, order: index }; });
+      const nextLayers = data.layers.filter(layer => layer.image).map((layer, index) => { const zIndex = Number.isFinite(layer.zIndex) ? layer.zIndex! : index; const name = layer.name || (zIndex === 0 ? "背景底图" : `图层 ${zIndex}`); return { id: layer.id || crypto.randomUUID(), name, image: layer.image!, kind: layer.kind, zIndex, boundingBox: layer.boundingBox, group: zIndex === 0 ? "背景" : inferLayerGroup(name, layer.kind), visible: true, opacity: 100, order: zIndex }; }).sort((a, b) => a.order - b.order);
       if (!nextLayers.length) throw new Error("图层分离服务未返回包含图片的数据");
       layerImagesRef.current.clear(); setLayers(nextLayers); setSelectedLayerId(nextLayers[0].id); setWorkspace("layers"); setLayerProgress(100); setLayerStage("已完成"); showToast(`图层分离完成，已生成 ${nextLayers.length} 个图层。`);
     } catch (e) { setLayerError(e instanceof Error ? e.message : "图层分离失败"); setLayerStage("处理失败，可重试"); } finally { window.clearInterval(progressTimer); setSeparating(false); }

@@ -50,6 +50,8 @@ export default function Home() {
   const [source, setSource] = useState("");
   const [uploadedSources, setUploadedSources] = useState<UploadedSource[]>([]);
   const [activeSourceId, setActiveSourceId] = useState("");
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState("");
   const [tool, setTool] = useState<Tool>("point");
   const [color, setColor] = useState(COLORS[3]);
   const [opacity, setOpacity] = useState(0.65);
@@ -168,13 +170,17 @@ export default function Home() {
   };
   const readSourceFile = (file: File) => new Promise<UploadedSource>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve({ id: crypto.randomUUID(), name: file.name, image: String(reader.result) }); reader.onerror = () => reject(new Error(`无法读取 ${file.name}`)); reader.readAsDataURL(file); });
   const selectSourceImage = (nextSource: UploadedSource) => { resetLayerResults(); setActiveSourceId(nextSource.id); setSource(nextSource.image); setResult(""); setShowResult(false); clearEditingState(); };
-  const addSources = async (files: FileList | null) => {
-    if (!files?.length) return;
-    const added = await Promise.all([...files].slice(0, 10).map(readSourceFile));
-    setUploadedSources(current => [...current, ...added]);
-    selectSourceImage(added[0]);
+  const addSources = async (files: File[]) => {
+    if (!files.length) return;
+    setUploading(true); setUploadError("");
+    try {
+      const added = await Promise.all(files.slice(0, 10).map(readSourceFile));
+      setUploadedSources(current => [...current, ...added]);
+      selectSourceImage(added[0]);
+    } catch (error) { setUploadError(error instanceof Error ? error.message : "图片读取失败，请重试。"); }
+    finally { setUploading(false); }
   };
-  const upload = (e: ChangeEvent<HTMLInputElement>) => { const files = e.target.files; e.target.value = ""; void addSources(files); };
+  const upload = (e: ChangeEvent<HTMLInputElement>) => { const files = Array.from(e.target.files || []); e.target.value = ""; void addSources(files); };
   const replaceActiveSource = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]; e.target.value = "";
     if (!file) return;
@@ -270,7 +276,7 @@ export default function Home() {
     <aside className="explore"><div className="explore-tabs"><b>发现</b><span>历史记录</span></div><div className="masonry">{Array.from({ length: 12 }).map((_, i) => <div key={i} className={`tile t${i % 6}`}>画梦<br/><small>视觉灵感 {i + 1}</small></div>)}</div></aside>
 
     <div className="modal-backdrop"><section className="draw-modal" aria-label="画板编辑器"><div className="modal-title"><div className="workspace-tabs"><button className={workspace === "edit" ? "selected" : ""} onClick={() => switchWorkspace("edit")}>交互编辑</button><button className={workspace === "layers" ? "selected" : ""} onClick={() => switchWorkspace("layers")}>图层分离</button></div><div className="result-actions">{workspace === "edit" && result && <><button className={!showResult ? "selected" : ""} onClick={() => switchCanvasImage(false)}>原图</button><button className={showResult ? "selected" : ""} onClick={() => switchCanvasImage(true)}>生成结果</button><button className="download-result" onClick={downloadResult}>↓ 下载结果图</button></>}<button onClick={clearCurrentImage} aria-label="清空当前图片" title="清空当前图片">×</button></div></div>
-      <div className="editor-stage" ref={stageRef}>{!canvasSource && <label className="upload-empty"><span>＋</span><b>上传图片开始创作</b><small>支持 PNG、JPG 或 WEBP</small><input type="file" accept="image/*" onChange={upload} /></label>}<canvas ref={canvasRef} onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerCancel={pointerUp} />
+      <div className="editor-stage" ref={stageRef}>{!canvasSource && <label className="upload-empty"><span>{uploading ? "⌛" : "＋"}</span><b>{uploading ? "正在读取图片…" : "上传图片开始创作"}</b><small>{uploadError || "支持 PNG、JPG 或 WEBP"}</small><input type="file" accept="image/*" onChange={upload} /></label>}<canvas ref={canvasRef} onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerCancel={pointerUp} />
         <div className="tools">{visibleTools.map(t => <button key={t} className={tool === t ? "selected tip" : "tip"} data-tip={TOOL_INFO[t].label} onClick={() => setTool(t)} aria-label={TOOL_INFO[t].label}><Icon>{TOOL_INFO[t].icon}</Icon></button>)}</div>
         <div className="history-tools"><button className="tip" data-tip="撤销" onClick={undo} disabled={!marks.length} aria-label="撤销">↶</button><button className="tip" data-tip="重做" onClick={redo} disabled={!redoStack.length} aria-label="重做">↷</button></div>
         <div className="zoom-tools"><button onClick={() => setZoom(z => Math.min(3, z + .1))} aria-label="放大">＋</button><span>{Math.round(zoom * 100)}%</span><button onClick={() => setZoom(z => Math.max(.3, z - .1))} aria-label="缩小">−</button><button onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }); }} aria-label="适应画布">⌗</button></div>

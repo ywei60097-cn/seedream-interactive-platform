@@ -46,6 +46,8 @@ test("includes a documented layer-separation adapter", async () => {
   assert.match(page, /resetLayerResults/);
   assert.match(page, /image-source-tray/);
   assert.match(page, /replaceActiveSource/);
+  assert.match(page, /Array\.from\(e\.target\.files/);
+  assert.match(page, /正在读取图片/);
   assert.match(page, /coordinateTokens: buildCoordinateTokens/);
   assert.match(route, /Seedream 5\.0 Pro 图层拆分走 ImageGenerations 的独立开关/);
   assert.match(route, /layer_decomposition: true/);

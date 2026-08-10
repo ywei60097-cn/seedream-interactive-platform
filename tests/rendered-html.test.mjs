@@ -41,6 +41,7 @@ test("includes a documented layer-separation adapter", async () => {
   assert.match(page, /reorderLayer/);
   assert.match(page, /分离引导/);
   assert.match(page, /手动引导/);
+  assert.match(page, /activeMarkRef/);
   assert.match(page, /coordinateTokens: buildCoordinateTokens/);
   assert.match(route, /isArkImageGeneration/);
   assert.doesNotMatch(route, /sequential_image_generation/);

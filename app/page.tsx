@@ -36,6 +36,10 @@ function Icon({ children }: { children: React.ReactNode }) { return <span aria-h
 export default function Home() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
+  // Pointer handlers run before React has necessarily committed state updates.
+  // Keep the active gesture in refs so a quick click or drag cannot lose its mark.
+  const activeMarkRef = useRef<Mark | null>(null);
+  const panDragRef = useRef<Point | null>(null);
   const layerImagesRef = useRef(new Map<string, HTMLImageElement>());
   const toastTimerRef = useRef<number | null>(null);
   const stageRef = useRef<HTMLDivElement>(null);
@@ -49,7 +53,6 @@ export default function Home() {
   const [active, setActive] = useState<Mark | null>(null);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
-  const [dragStart, setDragStart] = useState<Point | null>(null);
   const [prompt, setPrompt] = useState("");
   const [ratio, setRatio] = useState("1:1");
   const [outputWidth, setOutputWidth] = useState(1024);
@@ -131,16 +134,23 @@ export default function Home() {
   const toCanvasPoint = (clientX: number, clientY: number) => { const r = canvasRef.current!.getBoundingClientRect(); return { x: (clientX - r.left - pan.x) / zoom, y: (clientY - r.top - pan.y) / zoom }; };
   const pointerDown = (e: ReactPointerEvent<HTMLCanvasElement>) => {
     e.currentTarget.setPointerCapture(e.pointerId);
-    if (tool === "move" || !canvasSource) { setDragStart({ x: e.clientX - pan.x, y: e.clientY - pan.y }); return; }
+    if (tool === "move" || !canvasSource) { panDragRef.current = { x: e.clientX - pan.x, y: e.clientY - pan.y }; return; }
     const p = toCanvasPoint(e.clientX, e.clientY), number = marks.filter(m => m.tool === tool).length + 1;
-    setActive({ id: crypto.randomUUID(), tool, color, opacity, width: tool === "brush" ? brushWidth : 4, points: [p], number, intent: "" });
+    const nextMark = { id: crypto.randomUUID(), tool, color, opacity, width: tool === "brush" ? brushWidth : 4, points: [p], number, intent: "" } as Mark;
+    activeMarkRef.current = nextMark;
+    setActive(nextMark);
   };
   const pointerMove = (e: ReactPointerEvent<HTMLCanvasElement>) => {
+    const dragStart = panDragRef.current;
     if (dragStart) { setPan({ x: e.clientX - dragStart.x, y: e.clientY - dragStart.y }); return; }
-    if (!active || active.tool === "point") return; const p = toCanvasPoint(e.clientX, e.clientY); setActive({ ...active, points: active.tool === "brush" ? [...active.points, p] : [active.points[0], p] });
+    const currentMark = activeMarkRef.current;
+    if (!currentMark || currentMark.tool === "point") return;
+    const p = toCanvasPoint(e.clientX, e.clientY), nextMark = { ...currentMark, points: currentMark.tool === "brush" ? [...currentMark.points, p] : [currentMark.points[0], p] };
+    activeMarkRef.current = nextMark;
+    setActive(nextMark);
   };
-  const pointerUp = () => { setDragStart(null); if (active) { setMarks(old => [...old, active]); setRedoStack([]); setActive(null); } };
-  const clearEditingState = () => { setMarks([]); setRedoStack([]); setActive(null); setPan({ x: 0, y: 0 }); setZoom(1); };
+  const pointerUp = () => { panDragRef.current = null; const completedMark = activeMarkRef.current; if (completedMark) { setMarks(old => [...old, completedMark]); setRedoStack([]); activeMarkRef.current = null; setActive(null); } };
+  const clearEditingState = () => { activeMarkRef.current = null; panDragRef.current = null; setMarks([]); setRedoStack([]); setActive(null); setPan({ x: 0, y: 0 }); setZoom(1); };
   const switchInteractionMode = (nextMode: InteractionMode) => { if (nextMode === interactionMode) return; setInteractionMode(nextMode); setTool(nextMode === "coordinate" ? "point" : "brush"); clearEditingState(); setError(""); };
   const switchWorkspace = (nextWorkspace: Workspace) => { if (nextWorkspace === workspace) return; clearEditingState(); setWorkspace(nextWorkspace); setTool(nextWorkspace === "layers" ? "rect" : "point"); setLayerError(""); };
   const upload = (e: ChangeEvent<HTMLInputElement>) => { const file = e.target.files?.[0]; if (!file) return; const reader = new FileReader(); reader.onload = () => { setSource(String(reader.result)); setResult(""); setShowResult(false); clearEditingState(); }; reader.readAsDataURL(file); };

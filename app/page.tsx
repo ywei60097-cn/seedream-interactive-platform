@@ -232,7 +232,13 @@ export default function Home() {
     layerProgressTimerRef.current = progressTimer;
     try {
       const response = await fetch("/api/layers", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ image: source, prompt: prompt.trim() || undefined, coordinateTokens: buildCoordinateTokens(), markInstructions }) });
-      const data = await response.json() as { layers?: Array<{ id?: string; name?: string; image?: string; kind?: string; zIndex?: number; boundingBox?: LayerBounds }>; error?: string };
+      const responseText = await response.text();
+      let data: { layers?: Array<{ id?: string; name?: string; image?: string; kind?: string; zIndex?: number; boundingBox?: LayerBounds }>; error?: string };
+      try {
+        data = JSON.parse(responseText) as typeof data;
+      } catch {
+        throw new Error(`工作台接口返回了非 JSON 页面（HTTP ${response.status}）。请检查 Nginx 是否将 /api/ 代理到 127.0.0.1:3000。`);
+      }
       if (requestId !== layerRequestRef.current) return;
       if (!response.ok || !data.layers?.length) throw new Error(data.error || "图层分离服务未返回可用图层");
       const nextLayers = data.layers.filter(layer => layer.image).map((layer, index) => { const zIndex = Number.isFinite(layer.zIndex) ? layer.zIndex! : index; const name = layer.name || (zIndex === 0 ? "背景底图" : `图层 ${zIndex}`); return { id: layer.id || crypto.randomUUID(), name, image: layer.image!, kind: layer.kind, zIndex, boundingBox: layer.boundingBox, group: zIndex === 0 ? "背景" : inferLayerGroup(name, layer.kind), visible: true, opacity: 100, order: zIndex }; }).sort((a, b) => a.order - b.order);

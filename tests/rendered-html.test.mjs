@@ -52,6 +52,9 @@ test("includes a documented layer-separation adapter", async () => {
   assert.match(route, /Seedream 5\.0 Pro 图层拆分走 ImageGenerations 的独立开关/);
   assert.match(route, /layer_decomposition: true/);
   assert.match(route, /toLayerBoundingBox/);
+  assert.match(route, /图层分离服务返回了非 JSON 内容/);
+  assert.match(route, /不要包含方括号、圆括号或 Markdown 链接/);
+  assert.match(page, /工作台接口返回了非 JSON 页面/);
   assert.doesNotMatch(route, /sequential_image_generation/);
   assert.doesNotMatch(route, /max_images/);
   assert.match(await readFile(new URL("../app/api/generate/route.ts", import.meta.url), "utf8"), /referenceImages/);

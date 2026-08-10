@@ -63,6 +63,12 @@ export async function POST(request: Request) {
     const apiKey = process.env.LAYER_SEPARATION_API_KEY || process.env.ARK_API_KEY;
     const model = process.env.LAYER_SEPARATION_MODEL || process.env.ARK_MODEL_ID || "doubao-seedream-5-0-pro-260628";
     if (!apiKey) return Response.json({ error: "服务端尚未配置图层分离服务。请设置 LAYER_SEPARATION_API_KEY（或 ARK_API_KEY）。" }, { status: 503 });
+    try {
+      const parsedEndpoint = new URL(endpoint);
+      if (parsedEndpoint.protocol !== "https:") throw new Error("only HTTPS endpoints are supported");
+    } catch {
+      return Response.json({ error: "图层分离 API 地址无效。请只填写完整的 https://.../api/v3/images/generations 地址，不要包含方括号、圆括号或 Markdown 链接。" }, { status: 500 });
+    }
 
     const safeTokens = Array.isArray(coordinateTokens) ? coordinateTokens.filter((token): token is string => typeof token === "string" && /^图1(?:<point>\d+\s+\d+<\/point>|<bbox>\d+\s+\d+\s+\d+\s+\d+<\/bbox>)$/.test(token)).slice(0, 16) : [];
     const safeMarkInstructions = typeof markInstructions === "string" ? markInstructions.slice(0, 2_000) : "";
@@ -86,7 +92,14 @@ export async function POST(request: Request) {
       headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
       body: JSON.stringify(providerBody),
     });
-    const payload = await providerResponse.json() as Record<string, unknown>;
+    // 上游偶尔会返回网关 HTML 错误页；不要把它直接作为 JSON 解析错误暴露给用户。
+    const providerText = await providerResponse.text();
+    let payload: Record<string, unknown>;
+    try {
+      payload = JSON.parse(providerText) as Record<string, unknown>;
+    } catch {
+      return Response.json({ error: `图层分离服务返回了非 JSON 内容（上游 HTTP ${providerResponse.status}）。请检查 LAYER_SEPARATION_ENDPOINT 是否为 API 地址，而不是控制台/网页链接。` }, { status: 502 });
+    }
     if (!providerResponse.ok) {
       const message = (payload.error as { message?: string } | undefined)?.message || (typeof payload.message === "string" ? payload.message : `图层分离服务请求失败（${providerResponse.status}）`);
       return Response.json({ error: message }, { status: providerResponse.status });

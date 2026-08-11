@@ -45,6 +45,11 @@ test("includes a documented layer-separation adapter", async () => {
   assert.match(page, /clearCurrentImage/);
   assert.match(page, /resetLayerResults/);
   assert.match(page, /activeMarkRef/);
+  assert.match(page, /const \[editorSource, setEditorSource\]/);
+  assert.match(page, /const \[editorSourceLabel, setEditorSourceLabel\]/);
+  assert.match(page, /setEditorSource\(selectedLayer\.image\)/);
+  assert.doesNotMatch(page, /const editSelectedLayer = \(\) => \{ if \(!selectedLayer\) return; setSource\(selectedLayer\.image\)/);
+  assert.match(page, /正在编辑：\{editorSourceLabel\}/);
   assert.match(page, /优化分离提示词/);
   assert.match(page, /将画面拆分为独立图层/);
   assert.match(page, /所有文字与字母/);

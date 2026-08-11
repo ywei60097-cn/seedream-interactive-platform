@@ -48,6 +48,10 @@ test("includes a documented layer-separation adapter", async () => {
   assert.match(page, /replaceActiveSource/);
   assert.match(page, /Array\.from\(e\.target\.files/);
   assert.match(page, /正在读取图片/);
+  assert.match(page, /读取 .* 超时/);
+  assert.match(page, /已取消图片读取/);
+  assert.match(page, /Promise\.allSettled/);
+  assert.match(page, /取消读取/);
   assert.match(page, /优化提示词/);
   assert.match(page, /多个对象必须分别输出为独立的透明图层/);
   assert.match(page, /请填写编辑指令，或为至少一个标记填写编辑意图/);

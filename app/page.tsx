@@ -141,11 +141,23 @@ export default function Home() {
   }, []);
 
   const toCanvasPoint = (clientX: number, clientY: number) => { const r = canvasRef.current!.getBoundingClientRect(); return { x: (clientX - r.left - pan.x) / zoom, y: (clientY - r.top - pan.y) / zoom }; };
+  const finishGesture = useCallback(() => {
+    panDragRef.current = null;
+    const completedMark = activeMarkRef.current;
+    if (!completedMark) return;
+    setMarks(old => [...old, completedMark]); setRedoStack([]); activeMarkRef.current = null; setActive(null);
+  }, []);
+  useEffect(() => {
+    window.addEventListener("pointerup", finishGesture);
+    window.addEventListener("pointercancel", finishGesture);
+    return () => { window.removeEventListener("pointerup", finishGesture); window.removeEventListener("pointercancel", finishGesture); };
+  }, [finishGesture]);
   const pointerDown = (e: ReactPointerEvent<HTMLCanvasElement>) => {
-    e.currentTarget.setPointerCapture(e.pointerId);
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* Window-level fallback handles completion. */ }
     if (tool === "move" || !canvasSource) { panDragRef.current = { x: e.clientX - pan.x, y: e.clientY - pan.y }; return; }
     const p = toCanvasPoint(e.clientX, e.clientY), number = marks.filter(m => m.tool === tool).length + 1;
     const nextMark = { id: crypto.randomUUID(), tool, color, opacity, width: tool === "brush" ? brushWidth : 4, points: [p], number, intent: "" } as Mark;
+    if (nextMark.tool === "point") { setMarks(old => [...old, nextMark]); setRedoStack([]); return; }
     activeMarkRef.current = nextMark;
     setActive(nextMark);
   };
@@ -158,7 +170,7 @@ export default function Home() {
     activeMarkRef.current = nextMark;
     setActive(nextMark);
   };
-  const pointerUp = () => { panDragRef.current = null; const completedMark = activeMarkRef.current; if (completedMark) { setMarks(old => [...old, completedMark]); setRedoStack([]); activeMarkRef.current = null; setActive(null); } };
+  const pointerUp = () => finishGesture();
   const clearEditingState = () => { activeMarkRef.current = null; panDragRef.current = null; setMarks([]); setRedoStack([]); setActive(null); setPan({ x: 0, y: 0 }); setZoom(1); };
   const switchInteractionMode = (nextMode: InteractionMode) => { if (nextMode === interactionMode) return; setInteractionMode(nextMode); setTool(nextMode === "coordinate" ? "point" : "brush"); clearEditingState(); setError(""); };
   const switchWorkspace = (nextWorkspace: Workspace) => { if (nextWorkspace === workspace) return; clearEditingState(); setWorkspace(nextWorkspace); setTool(nextWorkspace === "layers" ? "rect" : "point"); setLayerError(""); };

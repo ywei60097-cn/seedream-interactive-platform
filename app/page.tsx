@@ -46,7 +46,6 @@ export default function Home() {
   const layerProgressTimerRef = useRef<number | null>(null);
   const layerImagesRef = useRef(new Map<string, HTMLImageElement>());
   const toastTimerRef = useRef<number | null>(null);
-  const uploadReadersRef = useRef(new Set<FileReader>());
   const stageRef = useRef<HTMLDivElement>(null);
   const [source, setSource] = useState("");
   const [uploadedSources, setUploadedSources] = useState<UploadedSource[]>([]);
@@ -170,39 +169,26 @@ export default function Home() {
     layerProgressTimerRef.current = null;
     layerImagesRef.current.clear(); setLayers([]); setSelectedLayerId(""); setLayerError(""); setLayerProgress(0); setLayerStage(""); setSeparating(false);
   };
-  const readSourceFile = (file: File) => new Promise<UploadedSource>((resolve, reject) => {
-    const supported = file.type.startsWith("image/") || /\.(png|jpe?g|webp)$/i.test(file.name);
-    if (!supported) { reject(new Error(`${file.name} 不是 PNG、JPG 或 WEBP 图片`)); return; }
-    const reader = new FileReader(); let settled = false;
-    const finish = (callback: () => void) => { if (settled) return; settled = true; window.clearTimeout(timeout); uploadReadersRef.current.delete(reader); callback(); };
-    const timeout = window.setTimeout(() => { finish(() => reject(new Error(`读取 ${file.name} 超时，请压缩图片后重试`))); try { reader.abort(); } catch { /* ignored */ } }, 15_000);
-    uploadReadersRef.current.add(reader);
-    reader.onload = () => finish(() => {
-      const image = typeof reader.result === "string" ? reader.result : "";
-      if (!image.startsWith("data:image/")) { reject(new Error(`无法读取 ${file.name}`)); return; }
-      resolve({ id: crypto.randomUUID(), name: file.name, image });
-    });
-    reader.onerror = () => finish(() => reject(new Error(`无法读取 ${file.name}`)));
-    reader.onabort = () => finish(() => reject(new Error(`已取消读取 ${file.name}`)));
-    try { reader.readAsDataURL(file); } catch { finish(() => reject(new Error(`无法读取 ${file.name}`))); }
-  });
+  const readSourceFile = (file: File) => new Promise<UploadedSource>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve({ id: crypto.randomUUID(), name: file.name, image: String(reader.result) }); reader.onerror = () => reject(new Error(`无法读取 ${file.name}`)); reader.readAsDataURL(file); });
   const selectSourceImage = (nextSource: UploadedSource) => { resetLayerResults(); setActiveSourceId(nextSource.id); setSource(nextSource.image); setResult(""); setShowResult(false); clearEditingState(); };
-  const addSources = async (files: File[]) => {
-    if (!files.length) return;
+  // 保持与原始 Demo 相同的单步上传：FileReader 读完立即设置画布主图，不能让多图队列阻塞主图。
+  const upload = (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]; e.target.value = "";
+    if (!file) return;
     setUploading(true); setUploadError("");
-    try {
-      const results = await Promise.allSettled(files.slice(0, 10).map(readSourceFile));
-      const added = results.filter((result): result is PromiseFulfilledResult<UploadedSource> => result.status === "fulfilled").map(result => result.value);
-      const failed = results.filter((result): result is PromiseRejectedResult => result.status === "rejected");
-      if (!added.length) throw new Error(failed[0]?.reason instanceof Error ? failed[0].reason.message : "图片读取失败，请重试。");
-      setUploadedSources(current => [...current, ...added]);
-      selectSourceImage(added[0]);
-      if (failed.length) setUploadError(`${failed.length} 张图片未能读取，已保留其余 ${added.length} 张。`);
-    } catch (error) { setUploadError(error instanceof Error ? error.message : "图片读取失败，请重试。"); }
-    finally { setUploading(false); }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const image = String(reader.result || "");
+      if (!image.startsWith("data:image/")) { setUploadError("图片格式无效，请选择 PNG、JPG 或 WEBP。"); setUploading(false); return; }
+      const nextSource = { id: crypto.randomUUID(), name: file.name, image };
+      setUploadedSources(current => [...current, nextSource]);
+      selectSourceImage(nextSource);
+      setUploading(false);
+    };
+    reader.onerror = () => { setUploadError(`无法读取 ${file.name}`); setUploading(false); };
+    reader.onabort = () => { setUploadError("图片读取已取消，可重新选择图片。"); setUploading(false); };
+    reader.readAsDataURL(file);
   };
-  const upload = (e: ChangeEvent<HTMLInputElement>) => { const files = Array.from(e.target.files || []); e.target.value = ""; void addSources(files); };
-  const cancelUpload = () => { uploadReadersRef.current.forEach(reader => reader.abort()); uploadReadersRef.current.clear(); setUploading(false); setUploadError("已取消图片读取，可重新选择图片。"); };
   const replaceActiveSource = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]; e.target.value = "";
     if (!file) return;
@@ -314,7 +300,7 @@ export default function Home() {
     <aside className="explore"><div className="explore-tabs"><b>发现</b><span>历史记录</span></div><div className="masonry">{Array.from({ length: 12 }).map((_, i) => <div key={i} className={`tile t${i % 6}`}>画梦<br/><small>视觉灵感 {i + 1}</small></div>)}</div></aside>
 
     <div className="modal-backdrop"><section className="draw-modal" aria-label="画板编辑器"><div className="modal-title"><div className="workspace-tabs"><button className={workspace === "edit" ? "selected" : ""} onClick={() => switchWorkspace("edit")}>交互编辑</button><button className={workspace === "layers" ? "selected" : ""} onClick={() => switchWorkspace("layers")}>图层分离</button></div><div className="result-actions">{workspace === "edit" && result && <><button className={!showResult ? "selected" : ""} onClick={() => switchCanvasImage(false)}>原图</button><button className={showResult ? "selected" : ""} onClick={() => switchCanvasImage(true)}>生成结果</button><button className="download-result" onClick={downloadResult}>↓ 下载结果图</button></>}<button onClick={clearCurrentImage} aria-label="清空当前图片" title="清空当前图片">×</button></div></div>
-      <div className="editor-stage" ref={stageRef}>{!canvasSource && <label className="upload-empty"><span>{uploading ? "⌛" : "＋"}</span><b>{uploading ? "正在读取图片…" : "上传图片开始创作"}</b><small>{uploadError || "支持 PNG、JPG 或 WEBP"}</small>{uploading && <button className="cancel-upload" onClick={event => { event.preventDefault(); event.stopPropagation(); cancelUpload(); }}>取消读取</button>}<input type="file" accept="image/*" onChange={upload} /></label>}<canvas ref={canvasRef} onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerCancel={pointerUp} />
+      <div className="editor-stage" ref={stageRef}>{!canvasSource && <label className="upload-empty"><span>{uploading ? "⌛" : "＋"}</span><b>{uploading ? "正在读取图片…" : "上传图片开始创作"}</b><small>{uploadError || "支持 PNG、JPG 或 WEBP"}</small><input type="file" accept="image/*" onChange={upload} /></label>}<canvas ref={canvasRef} onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerCancel={pointerUp} />
         <div className="tools">{visibleTools.map(t => <button key={t} className={tool === t ? "selected tip" : "tip"} data-tip={TOOL_INFO[t].label} onClick={() => setTool(t)} aria-label={TOOL_INFO[t].label}><Icon>{TOOL_INFO[t].icon}</Icon></button>)}</div>
         <div className="history-tools"><button className="tip" data-tip="撤销" onClick={undo} disabled={!marks.length} aria-label="撤销">↶</button><button className="tip" data-tip="重做" onClick={redo} disabled={!redoStack.length} aria-label="重做">↷</button></div>
         <div className="zoom-tools"><button onClick={() => setZoom(z => Math.min(3, z + .1))} aria-label="放大">＋</button><span>{Math.round(zoom * 100)}%</span><button onClick={() => setZoom(z => Math.max(.3, z - .1))} aria-label="缩小">−</button><button onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }); }} aria-label="适应画布">⌗</button></div>

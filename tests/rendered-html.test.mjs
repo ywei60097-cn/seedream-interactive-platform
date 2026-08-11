@@ -48,6 +48,10 @@ test("includes a documented layer-separation adapter", async () => {
   assert.match(page, /replaceActiveSource/);
   assert.match(page, /Array\.from\(e\.target\.files/);
   assert.match(page, /正在读取图片/);
+  assert.match(page, /优化提示词/);
+  assert.match(page, /多个对象必须分别输出为独立的透明图层/);
+  assert.match(page, /请填写编辑指令，或为至少一个标记填写编辑意图/);
+  assert.match(page, /切换、替换或删除当前图片会清空旧图层结果/);
   assert.match(page, /coordinateTokens: buildCoordinateTokens/);
   assert.match(route, /Seedream 5\.0 Pro 图层拆分走 ImageGenerations 的独立开关/);
   assert.match(route, /layer_decomposition: true/);

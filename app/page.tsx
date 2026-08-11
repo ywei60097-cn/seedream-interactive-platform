@@ -1,6 +1,5 @@
 "use client";
 
-import "./gesture.css";
 import { ChangeEvent, PointerEvent as ReactPointerEvent, useCallback, useEffect, useRef, useState } from "react";
 
 type Tool = "move" | "point" | "rect" | "brush" | "arrow";
@@ -38,10 +37,6 @@ function Icon({ children }: { children: React.ReactNode }) { return <span aria-h
 export default function Home() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
-  // Pointer handlers run before React has necessarily committed state updates.
-  // Keep the active gesture in refs so a quick click or drag cannot lose its mark.
-  const activeMarkRef = useRef<Mark | null>(null);
-  const panDragRef = useRef<Point | null>(null);
   const layerRequestRef = useRef(0);
   const layerProgressTimerRef = useRef<number | null>(null);
   const layerImagesRef = useRef(new Map<string, HTMLImageElement>());
@@ -62,6 +57,7 @@ export default function Home() {
   const [active, setActive] = useState<Mark | null>(null);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [dragStart, setDragStart] = useState<Point | null>(null);
   const [prompt, setPrompt] = useState("");
   const [ratio, setRatio] = useState("1:1");
   const [outputWidth, setOutputWidth] = useState(1024);
@@ -142,42 +138,22 @@ export default function Home() {
   }, []);
 
   const toCanvasPoint = (clientX: number, clientY: number) => { const r = canvasRef.current!.getBoundingClientRect(); return { x: (clientX - r.left - pan.x) / zoom, y: (clientY - r.top - pan.y) / zoom }; };
-  const finishGesture = useCallback(() => {
-    panDragRef.current = null;
-    const completedMark = activeMarkRef.current;
-    if (!completedMark) return;
-    setMarks(old => [...old, completedMark]); setRedoStack([]); activeMarkRef.current = null; setActive(null);
-  }, []);
-  useEffect(() => {
-    window.addEventListener("pointerup", finishGesture);
-    window.addEventListener("pointercancel", finishGesture);
-    return () => { window.removeEventListener("pointerup", finishGesture); window.removeEventListener("pointercancel", finishGesture); };
-  }, [finishGesture]);
-  // The image canvas is redrawn whenever image or mark state changes. Receive
-  // input on a separate stable surface so painting never replaces the active
-  // event target in the middle of a gesture.
-  const pointerDown = (e: ReactPointerEvent<HTMLElement>) => {
-    try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* Browser did not retain the capture; window fallback handles completion. */ }
-    if (tool === "move" || !canvasSource) { panDragRef.current = { x: e.clientX - pan.x, y: e.clientY - pan.y }; return; }
+  // Keep the proven source-demo event model: the canvas is both the rendered
+  // surface and the pointer target. Layer composition only changes what is
+  // drawn, never where the interaction events are received.
+  const pointerDown = (e: ReactPointerEvent<HTMLCanvasElement>) => {
+    e.currentTarget.setPointerCapture(e.pointerId);
+    if (tool === "move" || !canvasSource) { setDragStart({ x: e.clientX - pan.x, y: e.clientY - pan.y }); return; }
     const p = toCanvasPoint(e.clientX, e.clientY), number = marks.filter(m => m.tool === tool).length + 1;
-    const nextMark = { id: crypto.randomUUID(), tool, color, opacity, width: tool === "brush" ? brushWidth : 4, points: [p], number, intent: "" } as Mark;
-    // A point does not need a drag. Commit it immediately so a missing
-    // pointerup cannot make a click appear to have done nothing.
-    if (nextMark.tool === "point") { setMarks(old => [...old, nextMark]); setRedoStack([]); return; }
-    activeMarkRef.current = nextMark;
-    setActive(nextMark);
+    setActive({ id: crypto.randomUUID(), tool, color, opacity, width: tool === "brush" ? brushWidth : 4, points: [p], number, intent: "" } as Mark);
   };
-  const pointerMove = (e: ReactPointerEvent<HTMLElement>) => {
-    const dragStart = panDragRef.current;
+  const pointerMove = (e: ReactPointerEvent<HTMLCanvasElement>) => {
     if (dragStart) { setPan({ x: e.clientX - dragStart.x, y: e.clientY - dragStart.y }); return; }
-    const currentMark = activeMarkRef.current;
-    if (!currentMark || currentMark.tool === "point") return;
-    const p = toCanvasPoint(e.clientX, e.clientY), nextMark = { ...currentMark, points: currentMark.tool === "brush" ? [...currentMark.points, p] : [currentMark.points[0], p] };
-    activeMarkRef.current = nextMark;
-    setActive(nextMark);
+    if (!active || active.tool === "point") return;
+    const p = toCanvasPoint(e.clientX, e.clientY); setActive({ ...active, points: active.tool === "brush" ? [...active.points, p] : [active.points[0], p] });
   };
-  const pointerUp = () => finishGesture();
-  const clearEditingState = () => { activeMarkRef.current = null; panDragRef.current = null; setMarks([]); setRedoStack([]); setActive(null); setPan({ x: 0, y: 0 }); setZoom(1); };
+  const pointerUp = () => { setDragStart(null); if (active) { setMarks(old => [...old, active]); setRedoStack([]); setActive(null); } };
+  const clearEditingState = () => { setMarks([]); setRedoStack([]); setActive(null); setDragStart(null); setPan({ x: 0, y: 0 }); setZoom(1); };
   const switchInteractionMode = (nextMode: InteractionMode) => { if (nextMode === interactionMode) return; setInteractionMode(nextMode); setTool(nextMode === "coordinate" ? "point" : "brush"); clearEditingState(); setError(""); };
   const switchWorkspace = (nextWorkspace: Workspace) => { if (nextWorkspace === workspace) return; clearEditingState(); setWorkspace(nextWorkspace); setTool(nextWorkspace === "layers" ? "rect" : "point"); setLayerError(""); };
   const resetLayerResults = () => {
@@ -294,8 +270,7 @@ export default function Home() {
     <aside className="explore"><div className="explore-tabs"><b>发现</b><span>历史记录</span></div><div className="masonry">{Array.from({ length: 12 }).map((_, i) => <div key={i} className={`tile t${i % 6}`}>画梦<br/><small>视觉灵感 {i + 1}</small></div>)}</div></aside>
 
     <div className="modal-backdrop"><section className="draw-modal" aria-label="画板编辑器"><div className="modal-title"><div className="workspace-tabs"><button className={workspace === "edit" ? "selected" : ""} onClick={() => switchWorkspace("edit")}>交互编辑</button><button className={workspace === "layers" ? "selected" : ""} onClick={() => switchWorkspace("layers")}>图层分离</button></div><div className="result-actions">{workspace === "edit" && result && <><button className={!showResult ? "selected" : ""} onClick={() => switchCanvasImage(false)}>原图</button><button className={showResult ? "selected" : ""} onClick={() => switchCanvasImage(true)}>生成结果</button><button className="download-result" onClick={downloadResult}>↓ 下载结果图</button></>}<button onClick={clearCurrentImage} aria-label="清空当前图片" title="清空当前图片">×</button></div></div>
-      <div className="editor-stage" ref={stageRef}>{!canvasSource && <label className="upload-empty"><span>＋</span><b>上传图片开始创作</b><small>支持 PNG、JPG 或 WEBP</small><input type="file" accept="image/*" onChange={upload} /></label>}<canvas ref={canvasRef} onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerCancel={pointerUp} onLostPointerCapture={pointerUp} />
-        <div className="annotation-surface" aria-label="图片标注画布" onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerCancel={pointerUp} onLostPointerCapture={pointerUp} />
+      <div className="editor-stage" ref={stageRef}>{!canvasSource && <label className="upload-empty"><span>＋</span><b>上传图片开始创作</b><small>支持 PNG、JPG 或 WEBP</small><input type="file" accept="image/*" onChange={upload} /></label>}<canvas ref={canvasRef} onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerCancel={pointerUp} />
         <div className="tools">{visibleTools.map(t => <button key={t} className={tool === t ? "selected tip" : "tip"} data-tip={TOOL_INFO[t].label} onClick={() => setTool(t)} aria-label={TOOL_INFO[t].label}><Icon>{TOOL_INFO[t].icon}</Icon></button>)}</div>
         <div className="history-tools"><button className="tip" data-tip="撤销" onClick={undo} disabled={!marks.length} aria-label="撤销">↶</button><button className="tip" data-tip="重做" onClick={redo} disabled={!redoStack.length} aria-label="重做">↷</button></div>
         <div className="zoom-tools"><button onClick={() => setZoom(z => Math.min(3, z + .1))} aria-label="放大">＋</button><span>{Math.round(zoom * 100)}%</span><button onClick={() => setZoom(z => Math.max(.3, z - .1))} aria-label="缩小">−</button><button onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }); }} aria-label="适应画布">⌗</button></div>

@@ -1,9 +1,0 @@
-.editor-stage canvas { z-index: 0; }
-
-.annotation-surface {
-  position: absolute;
-  z-index: 1;
-  inset: 0;
-  touch-action: none;
-  cursor: crosshair;
-}

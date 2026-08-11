@@ -37,6 +37,11 @@ function Icon({ children }: { children: React.ReactNode }) { return <span aria-h
 export default function Home() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
+  // Pointer events can be delivered in one browser task.  React state updates
+  // from pointerdown are therefore not guaranteed to be visible to pointerup.
+  // Keep the in-progress stroke in refs so the final mark is never dropped.
+  const activeMarkRef = useRef<Mark | null>(null);
+  const dragStartRef = useRef<Point | null>(null);
   const layerRequestRef = useRef(0);
   const layerProgressTimerRef = useRef<number | null>(null);
   const layerImagesRef = useRef(new Map<string, HTMLImageElement>());
@@ -57,7 +62,6 @@ export default function Home() {
   const [active, setActive] = useState<Mark | null>(null);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
-  const [dragStart, setDragStart] = useState<Point | null>(null);
   const [prompt, setPrompt] = useState("");
   const [ratio, setRatio] = useState("1:1");
   const [outputWidth, setOutputWidth] = useState(1024);
@@ -143,17 +147,44 @@ export default function Home() {
   // drawn, never where the interaction events are received.
   const pointerDown = (e: ReactPointerEvent<HTMLCanvasElement>) => {
     e.currentTarget.setPointerCapture(e.pointerId);
-    if (tool === "move" || !canvasSource) { setDragStart({ x: e.clientX - pan.x, y: e.clientY - pan.y }); return; }
+    if (tool === "move" || !canvasSource) {
+      const nextDragStart = { x: e.clientX - pan.x, y: e.clientY - pan.y };
+      dragStartRef.current = nextDragStart;
+      return;
+    }
     const p = toCanvasPoint(e.clientX, e.clientY), number = marks.filter(m => m.tool === tool).length + 1;
-    setActive({ id: crypto.randomUUID(), tool, color, opacity, width: tool === "brush" ? brushWidth : 4, points: [p], number, intent: "" } as Mark);
+    const nextMark = { id: crypto.randomUUID(), tool, color, opacity, width: tool === "brush" ? brushWidth : 4, points: [p], number, intent: "" } as Mark;
+    // A point has no drag phase. Commit it here instead of waiting for
+    // pointerup, where React may still expose the previous render's state.
+    if (nextMark.tool === "point") {
+      setMarks(old => [...old, nextMark]);
+      setRedoStack([]);
+      return;
+    }
+    activeMarkRef.current = nextMark;
+    setActive(nextMark);
   };
   const pointerMove = (e: ReactPointerEvent<HTMLCanvasElement>) => {
-    if (dragStart) { setPan({ x: e.clientX - dragStart.x, y: e.clientY - dragStart.y }); return; }
-    if (!active || active.tool === "point") return;
-    const p = toCanvasPoint(e.clientX, e.clientY); setActive({ ...active, points: active.tool === "brush" ? [...active.points, p] : [active.points[0], p] });
+    const activeDragStart = dragStartRef.current;
+    if (activeDragStart) { setPan({ x: e.clientX - activeDragStart.x, y: e.clientY - activeDragStart.y }); return; }
+    const currentMark = activeMarkRef.current;
+    if (!currentMark) return;
+    const p = toCanvasPoint(e.clientX, e.clientY);
+    const nextMark = { ...currentMark, points: currentMark.tool === "brush" ? [...currentMark.points, p] : [currentMark.points[0], p] };
+    activeMarkRef.current = nextMark;
+    setActive(nextMark);
   };
-  const pointerUp = () => { setDragStart(null); if (active) { setMarks(old => [...old, active]); setRedoStack([]); setActive(null); } };
-  const clearEditingState = () => { setMarks([]); setRedoStack([]); setActive(null); setDragStart(null); setPan({ x: 0, y: 0 }); setZoom(1); };
+  const pointerUp = () => {
+    dragStartRef.current = null;
+    const currentMark = activeMarkRef.current;
+    if (currentMark) {
+      setMarks(old => [...old, currentMark]);
+      setRedoStack([]);
+      activeMarkRef.current = null;
+      setActive(null);
+    }
+  };
+  const clearEditingState = () => { activeMarkRef.current = null; dragStartRef.current = null; setMarks([]); setRedoStack([]); setActive(null); setPan({ x: 0, y: 0 }); setZoom(1); };
   const switchInteractionMode = (nextMode: InteractionMode) => { if (nextMode === interactionMode) return; setInteractionMode(nextMode); setTool(nextMode === "coordinate" ? "point" : "brush"); clearEditingState(); setError(""); };
   const switchWorkspace = (nextWorkspace: Workspace) => { if (nextWorkspace === workspace) return; clearEditingState(); setWorkspace(nextWorkspace); setTool(nextWorkspace === "layers" ? "rect" : "point"); setLayerError(""); };
   const resetLayerResults = () => {

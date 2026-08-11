@@ -43,11 +43,13 @@ test("includes a documented layer-separation adapter", async () => {
   assert.match(page, /手动引导/);
   assert.match(page, /const pointerDown = \(e: ReactPointerEvent<HTMLCanvasElement>\)/);
   assert.match(page, /e\.currentTarget\.setPointerCapture\(e\.pointerId\)/);
-  assert.match(page, /setActive\(\{ id: crypto\.randomUUID\(\)/);
+  assert.match(page, /const activeMarkRef = useRef<Mark \| null>\(null\)/);
+  assert.match(page, /activeMarkRef\.current = nextMark/);
+  assert.match(page, /if \(nextMark\.tool === "point"\)/);
   assert.doesNotMatch(page, /annotation-surface/);
   assert.match(page, /clearCurrentImage/);
   assert.match(page, /resetLayerResults/);
-  assert.match(page, /const \[dragStart, setDragStart\] = useState<Point \| null>\(null\)/);
+  assert.match(page, /const dragStartRef = useRef<Point \| null>\(null\)/);
   assert.match(page, /const \[editorSource, setEditorSource\]/);
   assert.match(page, /const \[editorSourceLabel, setEditorSourceLabel\]/);
   assert.match(page, /setEditorSource\(selectedLayer\.image\)/);

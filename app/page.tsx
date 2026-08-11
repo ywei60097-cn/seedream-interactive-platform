@@ -1,5 +1,6 @@
 "use client";
 
+import "./gesture.css";
 import { ChangeEvent, PointerEvent as ReactPointerEvent, useCallback, useEffect, useRef, useState } from "react";
 
 type Tool = "move" | "point" | "rect" | "brush" | "arrow";
@@ -152,16 +153,21 @@ export default function Home() {
     window.addEventListener("pointercancel", finishGesture);
     return () => { window.removeEventListener("pointerup", finishGesture); window.removeEventListener("pointercancel", finishGesture); };
   }, [finishGesture]);
-  const pointerDown = (e: ReactPointerEvent<HTMLCanvasElement>) => {
-    try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* Window-level fallback handles completion. */ }
+  // The image canvas is redrawn whenever image or mark state changes. Receive
+  // input on a separate stable surface so painting never replaces the active
+  // event target in the middle of a gesture.
+  const pointerDown = (e: ReactPointerEvent<HTMLElement>) => {
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* Browser did not retain the capture; window fallback handles completion. */ }
     if (tool === "move" || !canvasSource) { panDragRef.current = { x: e.clientX - pan.x, y: e.clientY - pan.y }; return; }
     const p = toCanvasPoint(e.clientX, e.clientY), number = marks.filter(m => m.tool === tool).length + 1;
     const nextMark = { id: crypto.randomUUID(), tool, color, opacity, width: tool === "brush" ? brushWidth : 4, points: [p], number, intent: "" } as Mark;
+    // A point does not need a drag. Commit it immediately so a missing
+    // pointerup cannot make a click appear to have done nothing.
     if (nextMark.tool === "point") { setMarks(old => [...old, nextMark]); setRedoStack([]); return; }
     activeMarkRef.current = nextMark;
     setActive(nextMark);
   };
-  const pointerMove = (e: ReactPointerEvent<HTMLCanvasElement>) => {
+  const pointerMove = (e: ReactPointerEvent<HTMLElement>) => {
     const dragStart = panDragRef.current;
     if (dragStart) { setPan({ x: e.clientX - dragStart.x, y: e.clientY - dragStart.y }); return; }
     const currentMark = activeMarkRef.current;
@@ -288,7 +294,8 @@ export default function Home() {
     <aside className="explore"><div className="explore-tabs"><b>发现</b><span>历史记录</span></div><div className="masonry">{Array.from({ length: 12 }).map((_, i) => <div key={i} className={`tile t${i % 6}`}>画梦<br/><small>视觉灵感 {i + 1}</small></div>)}</div></aside>
 
     <div className="modal-backdrop"><section className="draw-modal" aria-label="画板编辑器"><div className="modal-title"><div className="workspace-tabs"><button className={workspace === "edit" ? "selected" : ""} onClick={() => switchWorkspace("edit")}>交互编辑</button><button className={workspace === "layers" ? "selected" : ""} onClick={() => switchWorkspace("layers")}>图层分离</button></div><div className="result-actions">{workspace === "edit" && result && <><button className={!showResult ? "selected" : ""} onClick={() => switchCanvasImage(false)}>原图</button><button className={showResult ? "selected" : ""} onClick={() => switchCanvasImage(true)}>生成结果</button><button className="download-result" onClick={downloadResult}>↓ 下载结果图</button></>}<button onClick={clearCurrentImage} aria-label="清空当前图片" title="清空当前图片">×</button></div></div>
-      <div className="editor-stage" ref={stageRef}>{!canvasSource && <label className="upload-empty"><span>＋</span><b>上传图片开始创作</b><small>支持 PNG、JPG 或 WEBP</small><input type="file" accept="image/*" onChange={upload} /></label>}<canvas ref={canvasRef} onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerCancel={pointerUp} />
+      <div className="editor-stage" ref={stageRef}>{!canvasSource && <label className="upload-empty"><span>＋</span><b>上传图片开始创作</b><small>支持 PNG、JPG 或 WEBP</small><input type="file" accept="image/*" onChange={upload} /></label>}<canvas ref={canvasRef} onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerCancel={pointerUp} onLostPointerCapture={pointerUp} />
+        <div className="annotation-surface" aria-label="图片标注画布" onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerCancel={pointerUp} onLostPointerCapture={pointerUp} />
         <div className="tools">{visibleTools.map(t => <button key={t} className={tool === t ? "selected tip" : "tip"} data-tip={TOOL_INFO[t].label} onClick={() => setTool(t)} aria-label={TOOL_INFO[t].label}><Icon>{TOOL_INFO[t].icon}</Icon></button>)}</div>
         <div className="history-tools"><button className="tip" data-tip="撤销" onClick={undo} disabled={!marks.length} aria-label="撤销">↶</button><button className="tip" data-tip="重做" onClick={redo} disabled={!redoStack.length} aria-label="重做">↷</button></div>
         <div className="zoom-tools"><button onClick={() => setZoom(z => Math.min(3, z + .1))} aria-label="放大">＋</button><span>{Math.round(zoom * 100)}%</span><button onClick={() => setZoom(z => Math.max(.3, z - .1))} aria-label="缩小">−</button><button onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }); }} aria-label="适应画布">⌗</button></div>

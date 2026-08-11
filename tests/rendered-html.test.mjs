@@ -43,8 +43,11 @@ test("includes a documented layer-separation adapter", async () => {
   assert.match(page, /手动引导/);
   assert.match(page, /activeMarkRef/);
   assert.match(page, /const finishGesture = useCallback/);
+  assert.match(page, /annotation-surface/);
+  assert.match(page, /图片标注画布/);
   assert.match(page, /window\.addEventListener\("pointerup", finishGesture\)/);
   assert.match(page, /if \(nextMark\.tool === "point"\) \{ setMarks/);
+  assert.match(page, /onLostPointerCapture=\{pointerUp\}/);
   assert.match(page, /clearCurrentImage/);
   assert.match(page, /resetLayerResults/);
   assert.match(page, /activeMarkRef/);

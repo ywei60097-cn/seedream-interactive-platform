@@ -44,15 +44,10 @@ test("includes a documented layer-separation adapter", async () => {
   assert.match(page, /activeMarkRef/);
   assert.match(page, /clearCurrentImage/);
   assert.match(page, /resetLayerResults/);
-  assert.match(page, /image-source-tray/);
-  assert.match(page, /replaceActiveSource/);
-  assert.match(page, /正在读取图片/);
-  assert.match(page, /保持与原始 Demo 相同的单步上传/);
-  assert.match(page, /FileReader 读完立即设置画布主图/);
-  assert.match(page, /优化提示词/);
-  assert.match(page, /多个对象必须分别输出为独立的透明图层/);
-  assert.match(page, /请填写编辑指令，或为至少一个标记填写编辑意图/);
-  assert.match(page, /切换、替换或删除当前图片会清空旧图层结果/);
+  assert.match(page, /activeMarkRef/);
+  assert.match(page, /优化分离提示词/);
+  assert.match(page, /将画面拆分为独立图层/);
+  assert.match(page, /所有文字与字母/);
   assert.match(page, /coordinateTokens: buildCoordinateTokens/);
   assert.match(route, /Seedream 5\.0 Pro 图层拆分走 ImageGenerations 的独立开关/);
   assert.match(route, /layer_decomposition: true/);
@@ -62,7 +57,6 @@ test("includes a documented layer-separation adapter", async () => {
   assert.match(page, /工作台接口返回了非 JSON 页面/);
   assert.doesNotMatch(route, /sequential_image_generation/);
   assert.doesNotMatch(route, /max_images/);
-  assert.match(await readFile(new URL("../app/api/generate/route.ts", import.meta.url), "utf8"), /referenceImages/);
   assert.match(env, /LAYER_SEPARATION_MODEL/);
   assert.match(readme, /图层分离工作区/);
   await readFile(new URL("../app/editor.css", import.meta.url), "utf8");

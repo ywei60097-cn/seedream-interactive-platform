@@ -20,6 +20,10 @@ const RATIOS = [
   { value: "1:1", w: 1, h: 1, width: 1024, height: 1024 }, { value: "3:4", w: 3, h: 4, width: 864, height: 1152 }, { value: "2:3", w: 2, h: 3, width: 832, height: 1248 }, { value: "9:16", w: 9, h: 16, width: 720, height: 1280 },
 ];
 const DEFAULT_ADVANCED: Advanced = { outputFormat: "png", watermark: false };
+// `crypto.randomUUID()` is restricted to secure contexts. Localhost is treated
+// as secure by browsers, while a plain HTTP ECS IP is not. Keep editor marks
+// usable before a domain/HTTPS certificate is configured.
+const createId = () => globalThis.crypto?.randomUUID?.() || `seedream-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 const TOOL_INFO: Record<Tool, { icon: string; label: string }> = {
   move: { icon: "✋", label: "移动画布" }, point: { icon: "◎", label: "点标记" }, rect: { icon: "□", label: "矩形选区" }, brush: { icon: "⌁", label: "画笔" }, arrow: { icon: "↗", label: "箭头" },
 };
@@ -167,7 +171,7 @@ export default function Home() {
       return;
     }
     const p = toCanvasPoint(e.clientX, e.clientY), number = marks.filter(m => m.tool === tool).length + 1;
-    const nextMark = { id: crypto.randomUUID(), tool, color, opacity, width: tool === "brush" ? brushWidth : 4, points: [p], number, intent: "" } as Mark;
+    const nextMark = { id: createId(), tool, color, opacity, width: tool === "brush" ? brushWidth : 4, points: [p], number, intent: "" } as Mark;
     // A point has no drag phase. Commit it here instead of waiting for
     // pointerup, where React may still expose the previous render's state.
     if (nextMark.tool === "point") {
@@ -260,7 +264,7 @@ export default function Home() {
       }
       if (requestId !== layerRequestRef.current) return;
       if (!response.ok || !data.layers?.length) throw new Error(data.error || "图层分离服务未返回可用图层");
-      const nextLayers = data.layers.filter(layer => layer.image).map((layer, index) => { const zIndex = Number.isFinite(layer.zIndex) ? layer.zIndex! : index; const name = layer.name || (zIndex === 0 ? "背景底图" : `图层 ${zIndex}`); return { id: layer.id || crypto.randomUUID(), name, image: layer.image!, kind: layer.kind, zIndex, boundingBox: layer.boundingBox, group: zIndex === 0 ? "背景" : inferLayerGroup(name, layer.kind), visible: true, opacity: 100, order: zIndex }; }).sort((a, b) => a.order - b.order);
+      const nextLayers = data.layers.filter(layer => layer.image).map((layer, index) => { const zIndex = Number.isFinite(layer.zIndex) ? layer.zIndex! : index; const name = layer.name || (zIndex === 0 ? "背景底图" : `图层 ${zIndex}`); return { id: layer.id || createId(), name, image: layer.image!, kind: layer.kind, zIndex, boundingBox: layer.boundingBox, group: zIndex === 0 ? "背景" : inferLayerGroup(name, layer.kind), visible: true, opacity: 100, order: zIndex }; }).sort((a, b) => a.order - b.order);
       if (!nextLayers.length) throw new Error("图层分离服务未返回包含图片的数据");
       layerImagesRef.current.clear(); setLayers(nextLayers); setSelectedLayerId(nextLayers[0].id); setWorkspace("layers"); setLayerProgress(100); setLayerStage("已完成"); showToast(`图层分离完成，已生成 ${nextLayers.length} 个图层。`);
     } catch (e) { if (requestId === layerRequestRef.current) { setLayerError(e instanceof Error ? e.message : "图层分离失败"); setLayerStage("处理失败，可重试"); } } finally { if (layerProgressTimerRef.current === progressTimer) { window.clearInterval(progressTimer); layerProgressTimerRef.current = null; } if (requestId === layerRequestRef.current) setSeparating(false); }

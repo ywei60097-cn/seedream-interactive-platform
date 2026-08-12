@@ -24,6 +24,39 @@ const DEFAULT_ADVANCED: Advanced = { outputFormat: "png", watermark: false };
 // as secure by browsers, while a plain HTTP ECS IP is not. Keep editor marks
 // usable before a domain/HTTPS certificate is configured.
 const createId = () => globalThis.crypto?.randomUUID?.() || `seedream-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+const TEXT_TARGET = "所有文字与字母";
+const TEXT_PATTERN = /所有(?:的)?文字(?:与|和|及)?字母|文字(?:与|和|及)?字母|文字|字母|文本|标题|letter(?:s)?|text/gi;
+const TEXT_REQUEST_PATTERN = /所有(?:的)?文字(?:与|和|及)?字母|文字(?:与|和|及)?字母|文字|字母|文本|标题|letter(?:s)?|text/i;
+const BACKGROUND_PATTERN = /背景|天空|场景|环境|background|scene/i;
+
+// Keep prompt optimization deterministic and faithful to the user's request.
+// A text layer is added only when the user explicitly asks for text.
+const buildLayerPrompt = (rawPrompt: string) => {
+  const raw = rawPrompt.trim();
+  if (!raw) return "将画面拆分为独立图层：1. 主要主体（透明背景）；2. 其余背景。";
+  if (/将画面拆分为独立图层/.test(raw) && /透明背景/.test(raw)) return raw;
+
+  const actionIndex = raw.search(/分离|拆分|分层|抠出|提取/i);
+  let requested = actionIndex >= 0 ? raw.slice(actionIndex).replace(/^(?:分离|拆分|分层|抠出|提取)(?:出)?/i, "") : raw;
+  requested = requested
+    .replace(/^(?:图层|图片|图中|图片中|画面|画面中|画面里|原图|这张图)(?:中|里|内)?(?:的)?/i, "")
+    .replace(/(?:分别|单独|独立)?(?:保持|保留)(?:透明背景)?[。！!]*$/i, "")
+    .trim();
+
+  const includesText = TEXT_REQUEST_PATTERN.test(requested);
+  const objectNames = requested
+    .replace(TEXT_PATTERN, "|")
+    .split(/(?:、|，|,|；|;|\s+|和|与|及|以及|还有|跟)+/)
+    .map(name => name.replace(/^(?:图中|图片中|画面中|画面里的?|的|全部|所有)/, "").replace(/(?:主体|元素|对象)$/i, "").trim())
+    .filter(name => name && !/^(?:和|与|及|以及|还有|跟|请|帮我|一下)$/.test(name));
+  const uniqueObjects = [...new Set(objectNames)];
+  const layers = uniqueObjects.map(name => ({ name, transparent: !BACKGROUND_PATTERN.test(name) }));
+  if (includesText && !layers.some(layer => TEXT_REQUEST_PATTERN.test(layer.name))) layers.push({ name: TEXT_TARGET, transparent: true });
+  if (!layers.length) layers.push({ name: "主要主体", transparent: true });
+  if (!layers.some(layer => BACKGROUND_PATTERN.test(layer.name))) layers.push({ name: "其余背景", transparent: false });
+
+  return `将画面拆分为独立图层：${layers.map((layer, index) => `${index + 1}. ${layer.name}${layer.transparent ? "（透明背景）" : ""}`).join("；")}。`;
+};
 const TOOL_INFO: Record<Tool, { icon: string; label: string }> = {
   move: { icon: "✋", label: "移动画布" }, point: { icon: "◎", label: "点标记" }, rect: { icon: "□", label: "矩形选区" }, brush: { icon: "⌁", label: "画笔" }, arrow: { icon: "↗", label: "箭头" },
 };
@@ -272,13 +305,8 @@ export default function Home() {
   const reorderLayer = (targetId: string) => { if (!draggedLayerId || draggedLayerId === targetId) return; const current = [...orderedLayers], from = current.findIndex(layer => layer.id === draggedLayerId), to = current.findIndex(layer => layer.id === targetId); if (from < 0 || to < 0) return; const [moved] = current.splice(from, 1); current.splice(to, 0, moved); setLayers(current.map((layer, index) => ({ ...layer, order: index }))); setDraggedLayerId(""); };
   const markInstructions = marks.filter(mark => mark.intent.trim()).map(mark => `标记${String(mark.number).padStart(2, "0")}：${mark.intent.trim()}`).join("；");
   const optimizeLayerPrompt = () => {
-    const raw = prompt.trim();
-    const mentionedBird = /鹦鹉|鸟|parrot|bird/i.test(raw);
-    const mentionedText = /文字|字母|文本|标题|letter|text/i.test(raw);
-    const subject = mentionedBird ? "鹦鹉主体" : raw.replace(/^(请)?(分离|拆分)(图中|图片中|画面中|画面里的?)?(的)?/, "").split(/[、，,和与及]/)[0].trim() || "主要主体";
-    const textLayer = mentionedText ? "所有文字与字母" : "画面中的文字与字母（如有）";
-    setPrompt(`将画面拆分为独立图层：1. ${subject}；2. ${textLayer}；3. 其余背景。${subject}与${textLayer}分别保持透明背景。`);
-    showToast("已优化为可编辑的多图层分离指令。");
+    setPrompt(buildLayerPrompt(prompt));
+    showToast("已按你指定的对象优化分离提示词，可继续编辑。");
   };
   const editSelectedLayer = () => {
     if (!selectedLayer) return;

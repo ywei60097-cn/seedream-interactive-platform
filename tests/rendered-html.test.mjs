@@ -64,6 +64,10 @@ test("includes a documented layer-separation adapter", async () => {
   assert.match(page, /优化分离提示词/);
   assert.match(page, /将画面拆分为独立图层/);
   assert.match(page, /所有文字与字母/);
+  assert.match(page, /const buildLayerPrompt = \(rawPrompt: string\)/);
+  assert.match(page, /const includesText = TEXT_REQUEST_PATTERN\.test\(requested\)/);
+  assert.match(page, /A text layer is added only when the user explicitly asks for text/);
+  assert.doesNotMatch(page, /mentionedBird|mentionedText|textLayer/);
   assert.match(page, /coordinateTokens: buildCoordinateTokens/);
   assert.match(route, /Seedream 5\.0 Pro 图层拆分走 ImageGenerations 的独立开关/);
   assert.match(route, /layer_decomposition: true/);

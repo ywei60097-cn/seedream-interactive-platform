@@ -36,8 +36,12 @@ const buildLayerPrompt = (rawPrompt: string) => {
   if (!raw) return "将画面拆分为独立图层：1. 主要主体（透明背景）；2. 其余背景。";
   if (/将画面拆分为独立图层/.test(raw) && /透明背景/.test(raw)) return raw;
 
+  // Chinese natural-language requests commonly put the target before the
+  // action, e.g. “帮我把树枝分离出来”. Capture that target first rather
+  // than slicing after “分离”, which would reduce it to “出来”.
+  const targetBeforeAction = raw.match(/^(?:请|麻烦|帮我|请帮我)?(?:把|将)?\s*(.+?)\s*(?:分离|拆分|分层|抠出|提取)(?:出|开)?(?:来)?(?:一下|吧)?[。！!]*$/i)?.[1];
   const actionIndex = raw.search(/分离|拆分|分层|抠出|提取/i);
-  let requested = actionIndex >= 0 ? raw.slice(actionIndex).replace(/^(?:分离|拆分|分层|抠出|提取)(?:出)?/i, "") : raw;
+  let requested = targetBeforeAction || (actionIndex >= 0 ? raw.slice(actionIndex).replace(/^(?:分离|拆分|分层|抠出|提取)(?:出|开)?(?:来)?/i, "") : raw);
   requested = requested
     .replace(/^(?:图层|图片|图中|图片中|画面|画面中|画面里|原图|这张图)(?:中|里|内)?(?:的)?/i, "")
     .replace(/(?:分别|单独|独立)?(?:保持|保留)(?:透明背景)?[。！!]*$/i, "")
@@ -55,7 +59,8 @@ const buildLayerPrompt = (rawPrompt: string) => {
   if (!layers.length) layers.push({ name: "主要主体", transparent: true });
   if (!layers.some(layer => BACKGROUND_PATTERN.test(layer.name))) layers.push({ name: "其余背景", transparent: false });
 
-  return `将画面拆分为独立图层：${layers.map((layer, index) => `${index + 1}. ${layer.name}${layer.transparent ? "（透明背景）" : ""}`).join("；")}。`;
+  const originalIntent = raw.replace(/[。！!]+$/, "");
+  return `原始意图：${originalIntent}。执行要求：将画面拆分为独立图层：${layers.map((layer, index) => `${index + 1}. ${layer.name}${layer.transparent ? "（透明背景）" : ""}`).join("；")}。`;
 };
 const TOOL_INFO: Record<Tool, { icon: string; label: string }> = {
   move: { icon: "✋", label: "移动画布" }, point: { icon: "◎", label: "点标记" }, rect: { icon: "□", label: "矩形选区" }, brush: { icon: "⌁", label: "画笔" }, arrow: { icon: "↗", label: "箭头" },

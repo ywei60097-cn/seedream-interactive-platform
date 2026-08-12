@@ -46,6 +46,9 @@ test("includes a documented layer-separation adapter", async () => {
   assert.match(page, /const activeMarkRef = useRef<Mark \| null>\(null\)/);
   assert.match(page, /activeMarkRef\.current = nextMark/);
   assert.match(page, /if \(nextMark\.tool === "point"\)/);
+  assert.match(page, /const drawRef = useRef<\(\) => void>\(\(\) => \{\}\)/);
+  assert.match(page, /useEffect\(\(\) => \{ drawRef\.current = draw; \}, \[draw\]\)/);
+  assert.match(page, /\}, \[canvasSource\]\);/);
   assert.doesNotMatch(page, /annotation-surface/);
   assert.match(page, /clearCurrentImage/);
   assert.match(page, /resetLayerResults/);

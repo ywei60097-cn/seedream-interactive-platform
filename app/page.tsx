@@ -37,6 +37,7 @@ function Icon({ children }: { children: React.ReactNode }) { return <span aria-h
 export default function Home() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
+  const drawRef = useRef<() => void>(() => {});
   // Pointer events can be delivered in one browser task.  React state updates
   // from pointerdown are therefore not guaranteed to be visible to pointerup.
   // Keep the in-progress stroke in refs so the final mark is never dropped.
@@ -132,8 +133,21 @@ export default function Home() {
     marks.forEach(m => drawMark(ctx, m)); if (active) drawMark(ctx, active); ctx.restore();
   }, [active, drawMark, imageBox, layerPreviewOpacity, marks, orderedLayers, pan, workspace, zoom]);
 
-  useEffect(() => { if (!canvasSource) { imageRef.current = null; draw(); return; } const img = new Image(); img.onload = () => { imageRef.current = img; draw(); }; img.src = canvasSource; }, [canvasSource, draw]);
-  useEffect(() => { if (workspace !== "layers") return; orderedLayers.forEach(layer => { if (layerImagesRef.current.has(layer.id)) return; const image = new Image(); image.onload = () => { layerImagesRef.current.set(layer.id, image); draw(); }; image.src = layer.image; }); }, [draw, orderedLayers, workspace]);
+  // Loading the source image must not be tied to `draw`: draw changes for
+  // every stroke, so depending on it here repeatedly replaced Image.onload
+  // during an interaction. On slower production pages that can overwrite a
+  // just-rendered mark. Keep the latest drawing function in a ref instead.
+  useEffect(() => { drawRef.current = draw; }, [draw]);
+  useEffect(() => {
+    let cancelled = false;
+    if (!canvasSource) { imageRef.current = null; drawRef.current(); return () => { cancelled = true; }; }
+    const image = new Image();
+    image.onload = () => { if (!cancelled) { imageRef.current = image; drawRef.current(); } };
+    image.onerror = () => { if (!cancelled) { imageRef.current = null; drawRef.current(); } };
+    image.src = canvasSource;
+    return () => { cancelled = true; };
+  }, [canvasSource]);
+  useEffect(() => { if (workspace !== "layers") return; orderedLayers.forEach(layer => { if (layerImagesRef.current.has(layer.id)) return; const image = new Image(); image.onload = () => { layerImagesRef.current.set(layer.id, image); drawRef.current(); }; image.src = layer.image; }); }, [orderedLayers, workspace]);
   useEffect(() => { draw(); }, [draw]);
   useEffect(() => { const resize = () => draw(); window.addEventListener("resize", resize); return () => window.removeEventListener("resize", resize); }, [draw]);
   useEffect(() => {
